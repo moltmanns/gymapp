@@ -63,6 +63,8 @@ export default function SettingsPage() {
   const [email, setEmail] = useState("")
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
+  const [otp, setOtp] = useState("")
+  const [verifying, setVerifying] = useState(false)
 
   // Profile state
   const [profile, setProfile] = useState<UserProfile | null>(null)
@@ -229,7 +231,7 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleMagicLink(e: React.FormEvent) {
+  async function handleSendOtp(e: React.FormEvent) {
     e.preventDefault()
     if (!email) return
 
@@ -238,7 +240,7 @@ export default function SettingsPage() {
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          emailRedirectTo: process.env.NEXT_PUBLIC_SITE_URL || window.location.origin,
+          shouldCreateUser: true,
         },
       })
 
@@ -246,10 +248,33 @@ export default function SettingsPage() {
 
       setSent(true)
     } catch (err) {
-      console.error("Error sending magic link:", err)
-      alert("Failed to send magic link. Please try again.")
+      console.error("Error sending code:", err)
+      alert("Failed to send code. Please try again.")
     } finally {
       setSending(false)
+    }
+  }
+
+  async function handleVerifyOtp(e: React.FormEvent) {
+    e.preventDefault()
+    if (!email || !otp) return
+
+    setVerifying(true)
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        email,
+        token: otp,
+        type: "email",
+      })
+
+      if (error) throw error
+
+      // Success - auth state change will update user
+    } catch (err) {
+      console.error("Error verifying code:", err)
+      alert("Invalid code. Please try again.")
+    } finally {
+      setVerifying(false)
     }
   }
 
@@ -340,7 +365,7 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium">{user.email}</p>
-                <p className="text-sm text-muted-foreground">Signed in via magic link</p>
+                <p className="text-sm text-muted-foreground">Signed in</p>
               </div>
               <Button variant="outline" size="sm" onClick={handleSignOut}>
                 <LogOut className="mr-1 h-4 w-4" />
@@ -351,22 +376,58 @@ export default function SettingsPage() {
         </Card>
       ) : sent ? (
         <Card className="mb-6">
-          <CardContent className="p-6">
-            <div className="flex flex-col items-center text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/20 mb-4">
-                <CheckCircle className="h-8 w-8 text-lime" />
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Mail className="h-5 w-5" />
+              Enter Code
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground mb-4">
+              We sent a 6-digit code to <strong>{email}</strong>
+            </p>
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
+              <div>
+                <Label htmlFor="otp">Verification Code</Label>
+                <Input
+                  id="otp"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                  placeholder="123456"
+                  className="mt-1 text-center text-2xl tracking-widest"
+                  required
+                />
               </div>
-              <h2 className="text-xl font-semibold mb-2">Check Your Email</h2>
-              <p className="text-muted-foreground mb-4">
-                We sent a magic link to <strong>{email}</strong>
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Click the link in the email to sign in. You can close this page.
-              </p>
-              <Button variant="outline" className="mt-4" onClick={() => setSent(false)}>
-                Try Different Email
+              <Button
+                type="submit"
+                variant="gradient"
+                className="w-full"
+                disabled={verifying || otp.length !== 6}
+              >
+                {verifying ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Verifying...
+                  </span>
+                ) : (
+                  "Verify Code"
+                )}
               </Button>
-            </div>
+            </form>
+            <Button
+              variant="ghost"
+              className="w-full mt-2 text-muted-foreground"
+              onClick={() => {
+                setSent(false)
+                setOtp("")
+              }}
+            >
+              Use Different Email
+            </Button>
           </CardContent>
         </Card>
       ) : (
@@ -379,9 +440,9 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground mb-4">
-              Enter your email to receive a magic link. No password needed.
+              Enter your email to receive a sign-in code. No password needed.
             </p>
-            <form onSubmit={handleMagicLink} className="space-y-4">
+            <form onSubmit={handleSendOtp} className="space-y-4">
               <div>
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -400,7 +461,14 @@ export default function SettingsPage() {
                 className="w-full"
                 disabled={sending || !email}
               >
-                {sending ? "Sending..." : "Send Magic Link"}
+                {sending ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Sending...
+                  </span>
+                ) : (
+                  "Send Code"
+                )}
               </Button>
             </form>
           </CardContent>
