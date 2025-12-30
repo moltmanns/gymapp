@@ -334,7 +334,7 @@ export default function TodayPage() {
       </Card>
 
       {/* Streak Cards */}
-      <div className="mb-6 grid grid-cols-2 gap-3 stagger-children">
+      <div className="mb-6 grid grid-cols-2 gap-3 stagger-children grid-cards">
         {/* Workout Streak */}
         <Card className="stat-card overflow-hidden">
           <CardContent className="p-4">
@@ -385,7 +385,7 @@ export default function TodayPage() {
       </div>
 
       {/* Quick Actions */}
-      <div className="mb-6 grid grid-cols-2 gap-3 stagger-children">
+      <div className="mb-6 grid grid-cols-2 gap-3 stagger-children grid-cards">
         <Link href="/weight">
           <Card className="cursor-pointer transition-all duration-300 hover:bg-surface2 hover:-translate-y-1 hover:shadow-lg">
             <CardContent className="flex items-center gap-3 p-4">

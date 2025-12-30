@@ -25,6 +25,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import { SetLogger } from "@/components/set-logger"
 import {
   Check,
   Play,
@@ -37,6 +38,8 @@ import {
   Moon,
   ChevronRight,
   Zap,
+  Filter,
+  X,
 } from "lucide-react"
 
 interface TemplateItem {
@@ -91,6 +94,7 @@ function WorkoutContent() {
   const [finishing, setFinishing] = useState(false)
   const [demoExercise, setDemoExercise] = useState<TemplateItem | null>(null)
   const [justCompleted, setJustCompleted] = useState<string | null>(null)
+  const [equipmentFilter, setEquipmentFilter] = useState<string | null>(null)
 
   useEffect(() => {
     loadWorkoutData()
@@ -236,6 +240,23 @@ function WorkoutContent() {
   const totalCount = templateItems.length
   const progressPercent = totalCount > 0 ? (completedCount / totalCount) * 100 : 0
   const allCompleted = completedCount === totalCount && totalCount > 0
+
+  // Equipment filter
+  const equipmentTypes = [
+    { value: "machine", label: "Machine" },
+    { value: "cable", label: "Cable" },
+    { value: "dumbbell", label: "Dumbbell" },
+    { value: "barbell", label: "Barbell" },
+    { value: "bodyweight", label: "Bodyweight" },
+  ]
+
+  // Get unique equipment types in current template
+  const availableEquipment = [...new Set(templateItems.map((item) => item.exercise.equipment))]
+
+  // Filter items by equipment type
+  const filteredItems = equipmentFilter
+    ? templateItems.filter((item) => item.exercise.equipment === equipmentFilter)
+    : templateItems
 
   if (loading) {
     return (
@@ -383,12 +404,42 @@ function WorkoutContent() {
             <Zap className="h-5 w-5" />
             Today's Exercises
           </h2>
+
+          {/* Equipment Filter */}
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button
+              onClick={() => setEquipmentFilter(null)}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all ${
+                equipmentFilter === null
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-surface2 text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              All
+            </button>
+            {equipmentTypes
+              .filter((eq) => availableEquipment.includes(eq.value))
+              .map((eq) => (
+                <button
+                  key={eq.value}
+                  onClick={() => setEquipmentFilter(eq.value)}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all ${
+                    equipmentFilter === eq.value
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-surface2 text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {eq.label}
+                </button>
+              ))}
+          </div>
+
           <div className="space-y-2 stagger-children">
-            {templateItems.map((item, idx) => {
+            {filteredItems.map((item, idx) => {
               const repLabel = isPlank(item)
                 ? `${item.rep_min}–${item.rep_max}s`
                 : `${item.rep_min}–${item.rep_max}`
-              const isLast = idx === templateItems.length - 1
+              const isLast = idx === filteredItems.length - 1
 
               return (
                 <div key={item.id} className="relative">
@@ -403,10 +454,15 @@ function WorkoutContent() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium truncate">{item.exercise.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {item.sets} × {repLabel}
-                        {item.start_weight_lbs && ` • ${item.start_weight_lbs} lb`}
-                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs text-muted-foreground">
+                          {item.sets} × {repLabel}
+                          {item.start_weight_lbs && ` • ${item.start_weight_lbs} lb`}
+                        </span>
+                        <span className="inline-flex items-center rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary capitalize">
+                          {item.exercise.equipment}
+                        </span>
+                      </div>
                     </div>
                     <Timer className="h-4 w-4 text-muted-foreground" />
                   </div>
@@ -539,6 +595,9 @@ function WorkoutContent() {
                           <Timer className="h-3 w-3" />
                           {item.rest_seconds}s
                         </span>
+                        <span className="inline-flex items-center rounded-lg bg-blue-500/15 px-2 py-1 text-xs text-blue-400 capitalize">
+                          {item.exercise.equipment}
+                        </span>
                       </div>
 
                       {/* Form cue */}
@@ -588,6 +647,27 @@ function WorkoutContent() {
                             </div>
                           </SheetContent>
                         </Sheet>
+                      )}
+
+                      {/* Set Logger - for weighted exercises only */}
+                      {!isPlank(item) && userId && sessionId && (
+                        <div className="mt-4 pt-4 border-t border-border">
+                          <SetLogger
+                            sessionId={sessionId}
+                            exerciseId={item.exercise.id}
+                            userId={userId}
+                            targetSets={item.sets}
+                            repMin={item.rep_min}
+                            repMax={item.rep_max}
+                            startWeight={item.start_weight_lbs}
+                            incrementLbs={item.increment_lbs}
+                            onAllSetsCompleted={(allDone) => {
+                              if (allDone && !completed) {
+                                handleToggleExercise(item.id)
+                              }
+                            }}
+                          />
+                        </div>
                       )}
                     </div>
                   </div>

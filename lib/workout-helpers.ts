@@ -400,3 +400,283 @@ export async function finishSession(sessionId: string): Promise<void> {
     .update({ ended_at: new Date().toISOString() })
     .eq("id", sessionId)
 }
+
+// ============================================
+// SET LOGGING & PROGRESSION SYSTEM
+// ============================================
+
+export interface SetLog {
+  id?: string
+  session_id: string
+  exercise_id: string
+  set_number: number
+  weight_lbs: number
+  reps: number
+  rir: number | null
+  is_warmup: boolean
+}
+
+export interface ExercisePerformance {
+  session_id: string
+  session_date: string
+  sets: {
+    set_number: number
+    weight_lbs: number
+    reps: number
+    rir: number | null
+  }[]
+}
+
+export interface ProgressionSuggestion {
+  suggestedWeight: number
+  reason: string
+  status: "increase" | "maintain" | "decrease"
+  allSetsHitMax: boolean
+  avgReps: number
+  lastWeight: number
+}
+
+/**
+ * Log a single set for an exercise
+ */
+export async function logSet(set: Omit<SetLog, "id">): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("workout_sets")
+    .insert(set)
+    .select("id")
+    .single()
+
+  if (error) {
+    console.error("Error logging set:", error)
+    return null
+  }
+
+  return data?.id || null
+}
+
+/**
+ * Update an existing set
+ */
+export async function updateSet(
+  setId: string,
+  updates: Partial<Omit<SetLog, "id" | "session_id" | "exercise_id">>
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("workout_sets")
+    .update(updates)
+    .eq("id", setId)
+
+  return !error
+}
+
+/**
+ * Delete a set
+ */
+export async function deleteSet(setId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from("workout_sets")
+    .delete()
+    .eq("id", setId)
+
+  return !error
+}
+
+/**
+ * Get all sets for an exercise in a session
+ */
+export async function getSessionSets(
+  sessionId: string,
+  exerciseId: string
+): Promise<SetLog[]> {
+  const { data } = await supabase
+    .from("workout_sets")
+    .select("*")
+    .eq("session_id", sessionId)
+    .eq("exercise_id", exerciseId)
+    .order("set_number")
+
+  return (data || []) as SetLog[]
+}
+
+/**
+ * Get previous performance for an exercise (last N sessions)
+ */
+export async function getExerciseHistory(
+  userId: string,
+  exerciseId: string,
+  limit: number = 5
+): Promise<ExercisePerformance[]> {
+  // Get recent sessions for this user that have sets for this exercise
+  const { data: sessions } = await supabase
+    .from("workout_sessions")
+    .select(`
+      id,
+      started_at,
+      workout_sets!inner(
+        set_number,
+        weight_lbs,
+        reps,
+        rir,
+        is_warmup,
+        exercise_id
+      )
+    `)
+    .eq("user_id", userId)
+    .eq("workout_sets.exercise_id", exerciseId)
+    .eq("workout_sets.is_warmup", false)
+    .not("ended_at", "is", null) // Only completed sessions
+    .order("started_at", { ascending: false })
+    .limit(limit)
+
+  if (!sessions) return []
+
+  return sessions.map((session) => ({
+    session_id: session.id,
+    session_date: session.started_at.split("T")[0],
+    sets: (session.workout_sets as Array<{
+      set_number: number
+      weight_lbs: number
+      reps: number
+      rir: number | null
+      is_warmup: boolean
+    }>)
+      .filter((s) => !s.is_warmup)
+      .sort((a, b) => a.set_number - b.set_number)
+      .map((s) => ({
+        set_number: s.set_number,
+        weight_lbs: s.weight_lbs,
+        reps: s.reps,
+        rir: s.rir,
+      })),
+  }))
+}
+
+/**
+ * Calculate progression suggestion based on performance
+ *
+ * Rules:
+ * - Increase weight ONLY when ALL working sets hit rep_max with RIR >= 1
+ * - If any set is below rep_max, maintain current weight
+ * - If reps dropped significantly (≥2) across sessions, consider decreasing
+ */
+export function calculateProgression(
+  history: ExercisePerformance[],
+  repMin: number,
+  repMax: number,
+  incrementLbs: number,
+  currentWeight: number
+): ProgressionSuggestion {
+  // No history - use current/starting weight
+  if (history.length === 0) {
+    return {
+      suggestedWeight: currentWeight,
+      reason: "First time - start here",
+      status: "maintain",
+      allSetsHitMax: false,
+      avgReps: 0,
+      lastWeight: currentWeight,
+    }
+  }
+
+  const lastSession = history[0]
+  const lastSets = lastSession.sets
+
+  if (lastSets.length === 0) {
+    return {
+      suggestedWeight: currentWeight,
+      reason: "No sets logged last session",
+      status: "maintain",
+      allSetsHitMax: false,
+      avgReps: 0,
+      lastWeight: currentWeight,
+    }
+  }
+
+  // Calculate averages from last session
+  const lastWeight = lastSets[0].weight_lbs
+  const avgReps = lastSets.reduce((sum, s) => sum + s.reps, 0) / lastSets.length
+  const minReps = Math.min(...lastSets.map((s) => s.reps))
+  const allSetsHitMax = lastSets.every((s) => s.reps >= repMax)
+  const lastSetRir = lastSets[lastSets.length - 1].rir
+
+  // Check for rep drop (fatigue detection)
+  if (history.length >= 2) {
+    const prevSession = history[1]
+    const prevAvgReps = prevSession.sets.length > 0
+      ? prevSession.sets.reduce((sum, s) => sum + s.reps, 0) / prevSession.sets.length
+      : 0
+
+    // If avg reps dropped by 2+ at same weight, suggest maintaining
+    if (prevAvgReps - avgReps >= 2 && lastWeight === prevSession.sets[0]?.weight_lbs) {
+      return {
+        suggestedWeight: lastWeight,
+        reason: "Reps dropped - focus on recovery",
+        status: "maintain",
+        allSetsHitMax: false,
+        avgReps,
+        lastWeight,
+      }
+    }
+  }
+
+  // Progression logic
+  if (allSetsHitMax && (lastSetRir === null || lastSetRir >= 1)) {
+    // All sets hit max reps with RIR >= 1 - INCREASE
+    return {
+      suggestedWeight: lastWeight + incrementLbs,
+      reason: `All sets hit ${repMax} reps - increase weight`,
+      status: "increase",
+      allSetsHitMax: true,
+      avgReps,
+      lastWeight,
+    }
+  }
+
+  if (minReps < repMin) {
+    // Couldn't hit minimum reps - might need to decrease
+    // But only suggest decrease if this happened 2+ sessions in a row
+    if (history.length >= 2) {
+      const prevMinReps = history[1].sets.length > 0
+        ? Math.min(...history[1].sets.map((s) => s.reps))
+        : repMax
+
+      if (prevMinReps < repMin) {
+        return {
+          suggestedWeight: Math.max(lastWeight - incrementLbs, 0),
+          reason: "Struggling with reps - reduce weight",
+          status: "decrease",
+          allSetsHitMax: false,
+          avgReps,
+          lastWeight,
+        }
+      }
+    }
+  }
+
+  // Default - maintain weight, chase reps
+  return {
+    suggestedWeight: lastWeight,
+    reason: avgReps < repMax
+      ? `Keep weight, aim for ${repMax} reps`
+      : "Solid performance - maintain",
+    status: "maintain",
+    allSetsHitMax: false,
+    avgReps,
+    lastWeight,
+  }
+}
+
+/**
+ * Get suggested weight for next session of an exercise
+ */
+export async function getSuggestedWeight(
+  userId: string,
+  exerciseId: string,
+  repMin: number,
+  repMax: number,
+  incrementLbs: number,
+  defaultWeight: number
+): Promise<ProgressionSuggestion> {
+  const history = await getExerciseHistory(userId, exerciseId, 3)
+  return calculateProgression(history, repMin, repMax, incrementLbs, defaultWeight)
+}
