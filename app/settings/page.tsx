@@ -394,10 +394,10 @@ export default function SettingsPage() {
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  maxLength={6}
+                  maxLength={8}
                   value={otp}
                   onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-                  placeholder="123456"
+                  placeholder="12345678"
                   className="mt-1 text-center text-2xl tracking-widest"
                   required
                 />
@@ -406,7 +406,7 @@ export default function SettingsPage() {
                 type="submit"
                 variant="gradient"
                 className="w-full"
-                disabled={verifying || otp.length !== 6}
+                disabled={verifying || otp.length !== 8}
               >
                 {verifying ? (
                   <span className="flex items-center gap-2">
